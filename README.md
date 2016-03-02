@@ -1,5 +1,6 @@
 nxos_file_xfer
 =========
+[![Build Status](https://travis-ci.org/robertwatson3/nxos_file_xfer.svg?branch=master)](https://travis-ci.org/robertwatson3/nxos_file_xfer)
 
 This is a role for transferring (large or small) files to NXOS devices. The role will copy the file to
 a switch. If desired, the switch can then be used as an SCP server by using the "switch_scp_server" option. Then all additional switches in the play will use
