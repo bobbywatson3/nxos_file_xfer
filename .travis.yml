@@ -20,7 +20,7 @@ install:
   - ansible --version
 
   # Create ansible.cfg with correct roles_path
-  - printf '[defaults]\nroles_path=../' >ansible.cfg
+  - printf '[defaults]\nroles_path=../\nlibrary = library/' >ansible.cfg
 
   # Clone nxos-ansible requirement
   - git clone https://github.com/jedelman8/nxos-ansible.git
