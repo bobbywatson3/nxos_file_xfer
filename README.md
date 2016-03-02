@@ -16,19 +16,21 @@ Requirements
 
 Role Variables
 --------------
-
-  log_file_dir: "{{ playbook_dir }}/logs/"
-  enable_logging: True
-  transport: scp
-  ftp_timeout: 600
-  firmware_destination: "bootflash:"
-  switch_vrf: management
-  firmware_force: false
-  switch_scp_server: false
-
+```YAML
+---
+log_file_dir: "{{ playbook_dir }}/logs/"
+enable_logging: True
+transport: scp
+ftp_timeout: 600
+firmware_destination: "bootflash:"
+switch_vrf: management
+firmware_force: false
+switch_scp_server: false
+```
 Example Playbook
 ----------------
-
+```YAML
+---
 - hosts: nxos
   connection: local
   gather_facts: yes
@@ -58,6 +60,7 @@ Example Playbook
       private: False
     - name: firmware_remote_password
       prompt: "What is the firmware file server password?"
+```
 
 License
 -------
