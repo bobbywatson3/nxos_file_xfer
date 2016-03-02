@@ -1,0 +1,91 @@
+---
+# tasks file for roles/nxos_file_xfer
+
+- block:
+  # These tasks run when switch_scp_server is enabled.
+  - name: Copy file(s) to remote switch (This will take an extended period of time.)
+    nxos_file_xfer:
+      host: "{{ inventory_hostname }}"
+      username: "{{ switch_username }}"
+      password: "{{ switch_password }}"
+      remote_server: "{{ firmware_remote_server }}"
+      remote_user: "{{ firmware_remote_user }}"
+      remote_password: "{{ firmware_remote_password }}"
+      filename: "{{ item }}"
+      remote_path: "{{ firmware_remote_server_path }}"
+      transport: "{{ transport }}"
+      ftp_timeout: "{{ ftp_timeout }}"
+      destination: "{{ firmware_destination }}"
+      vrf: "{{ switch_vrf }}"
+      force: "{{ firmware_force }}"
+      log: "{{ enable_logging }}"
+      log_file: "{{ log_file_dir }}/{{ inventory_hostname }}-{{ item }}-nxos_file_xfer_log_file.txt"
+    run_once: true
+    register: nxos_server
+    when: switch_scp_server
+    with_items: "{{ files }}"
+
+  - name: Configure switch to act as SCP file server
+    nxos_command:
+      command: feature scp
+      host: "{{ inventory_hostname }}"
+      username: "{{ switch_username }}"
+      password: "{{ switch_password }}"
+      type: config
+    when: (nxos_server.results[0].host is defined) and (inventory_hostname == nxos_server.results[0].host) and (switch_scp_server)
+
+  - name: Copy file(s) to remote switches from SCP file server switch (This will take an extended period of time.)
+    nxos_file_xfer:
+      host: "{{ inventory_hostname }}"
+      username: "{{ switch_username }}"
+      password: "{{ switch_password }}"
+      remote_server: "{{ lookup('dig', nxos_server.results[0].host) }}"
+      remote_user: "{{ switch_username }}"
+      remote_password: "{{ switch_password }}"
+      filename: "{{ item }}"
+      remote_path: ""
+      transport: scp
+      destination: "{{ firmware_destination }}"
+      vrf: "{{ switch_vrf }}"
+      force: "{{ firmware_force }}"
+      log: "{{ enable_logging }}"
+      log_file: "{{ log_file_dir }}/{{ inventory_hostname }}-{{ item }}-nxos_file_xfer_switch_to_switch_log_file.txt"
+    when: (nxos_server.results[0].host is defined) and (inventory_hostname != nxos_server.results[0].host) and (switch_scp_server)
+    with_items: "{{ files }}"
+
+
+  # This task only runs when switch_scp_server is not enabled.
+  - name: Copy file(s) to switches (This will take an extended period of time.)
+    nxos_file_xfer:
+      host: "{{ inventory_hostname }}"
+      username: "{{ switch_username }}"
+      password: "{{ switch_password }}"
+      remote_server: "{{ firmware_remote_server }}"
+      remote_user: "{{ firmware_remote_user }}"
+      remote_password: "{{ firmware_remote_password }}"
+      filename: "{{ item }}"
+      remote_path: "{{ firmware_remote_server_path }}"
+      transport: "{{ transport }}"
+      ftp_timeout: "{{ ftp_timeout }}"
+      destination: "{{ firmware_destination }}"
+      vrf: "{{ switch_vrf }}"
+      force: "{{ firmware_force }}"
+      log: "{{ enable_logging }}"
+      log_file: "{{ log_file_dir }}/{{ inventory_hostname }}-{{ item }}-nxos_file_xfer_log_file.txt"
+    when: not switch_scp_server
+    with_items: "{{ files }}"
+
+  always:
+  # Run this even if there are errors in the block.
+  - name: Disable NXOS SCP file server
+    nxos_command:
+      command: no feature scp-server
+      host: "{{ inventory_hostname }}"
+      username: "{{ switch_username }}"
+      password: "{{ switch_password }}"
+      type: config
+    when: (nxos_server.results[0].host is defined) and (inventory_hostname == nxos_server.results[0].host) and (switch_scp_server)
+
+  # This tags the whole block
+  tags:
+    - fw_stage

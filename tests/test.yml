@@ -1,0 +1,18 @@
+---
+- hosts: localhost
+  connection: local
+  gather_facts: yes
+  force_handlers: True
+
+  vars:
+    firmware_nxos_filename: n9000-dk9.7.0.3.I2.2a.bin
+    firmware_epld_filename: n9000-epld.7.0.3.I2.2a.img
+    firmware_remote_server_path: /scp
+    firmware_remote_server: 10.0.0.1
+    switch_username: user
+    switch_password: password
+    firmware_remote_user: user
+    firmware_remote_password: password
+
+  roles:
+    - nxos_file_xfer

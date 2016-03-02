@@ -1,0 +1,360 @@
+#!/usr/bin/env python
+
+# Copyright Cisco Systems
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+DOCUMENTATION = '''
+---
+
+module: nxos_file_xfer
+
+short_description: Copies files to NXOS devices.
+
+description:
+    - The image must be present on the remote server at the remote_path.
+
+
+author: Bobby Watson (bwatsoni@cisco.com)
+
+requirements:
+    - Cisco NX-OS
+    - pexpect
+    - dnspython if using NXOS switch as SCP file server.
+
+notes:
+    - File copies may take an extended period of time. Because Ansible does not
+    provide updates during this time, it may be beneficial to include a warning
+    in the name of the task that lets the user know that there may be an extended
+    period of non-responsiveness while the file is downloaded.
+
+options:
+    host:
+        description:
+            - Host NXOS device to copy file to.
+        required: true
+        default: null
+
+    username:
+        description:
+            - Username used to login to NXOS device.
+        required: true
+        default: null
+
+    password:
+        description:
+            - Password used to login to NXOS device.
+        required: true
+        default: null
+
+    vrf:
+        description:
+            - VRF to use when copying file.
+        required: false
+        default: management
+
+    remote_server:
+        description:
+            - IP address or hostname of remote server where file is hosted.
+        required: true
+        default: null
+
+    remote_path:
+        description:
+            - Full path to file (but not including file name.)
+        required: true
+        default: null
+
+    remote_user:
+        description:
+            - Username for remote server where file is hosted.
+        required: true
+        default: null
+
+    remote_password:
+        description:
+            - Password for remote server where file is hosted.
+        required: true
+        default: null
+
+    transport:
+        description:
+            - Method to use to download file. Choices are scp or ftp.
+        required: true
+        default: null
+        choices: [scp, ftp]
+
+    ftp_timeout:
+        description:
+            - FTP transfers don't provide status during download. This means
+            that the module has to wait for a 'Copy complete' from the switch.
+            The default timeout is 10 minutes, but this can be increased
+            as needed.
+        required: false
+        default: 600
+
+    filename:
+        description:
+            - Filename of image on remote server.
+        required: true
+        default: null
+
+    destination:
+        description:
+            - Destination for file to be copied to.
+        required: false
+        default: bootflash:
+
+    force:
+        description:
+            - Force copying file even if it already exists on NXOS device.
+        required: false
+        default: false
+
+
+'''
+
+EXAMPLES = '''
+- name: Copy NXOS Image
+  nxos_file_xfer:
+    host: "{{ inventory_hostname }}"
+    username: cisco
+    password: cisco
+    remote_server: 192.168.1.10
+    remote_user: user
+    remote_password: password
+    transport: scp
+    filename: n9000-dk9.7.0.3.I1.0.236.bin
+    remote_path: /files/nxos
+    destination: bootflash:
+    vrf: management
+    force: false
+    log: true
+    log_file: '/User/username/logfile.txt'
+
+'''
+
+from pexpect import pxssh
+import pexpect
+import os
+from time import sleep
+
+
+class file_copy(object):
+    """
+    This copies the file to the switch.
+    """
+    def __init__(self, module):
+        self.module = module
+        self.host = module.params['host']
+        self.username = module.params['username']
+        self.password = module.params['password']
+        self.filename = module.params['filename']
+        self.logged_in = False
+        self.remote_server = module.params['remote_server']
+        self.remote_user = module.params['remote_user']
+        self.remote_password = module.params['remote_password']
+        self.transport = module.params['transport']
+        self.ftp_timeout = module.params['ftp_timeout']
+        self.remote_path = module.params['remote_path']
+        self.destination = module.params['destination']
+        self.vrf = module.params['vrf']
+        self.force = module.params['force']
+        self.log = module.params['log']
+        self.log_file = module.params['log_file']
+        self.session = self.create_session()
+
+    def create_session(self):
+        for attempt in range(5):
+            try:
+                sesh = pxssh.pxssh(options={"StrictHostKeyChecking": "no",
+                                   "UserKnownHostsFile": "/dev/null"})
+                # Enable the following line if you need to see all output.
+                # This will make Ansible think that there was an error, however.
+                # sesh.logfile_read = sys.stdout
+                if self.log:
+                    sesh.logfile_read = file(self.log_file, 'w')
+                sesh.force_password = True
+                return(sesh)
+
+            except (pxssh.ExceptionPxssh, pexpect.exceptions) as e:
+                sesh.close()
+                continue
+
+            else:
+                sesh.close()
+                self.module.fail_json(msg="Connection Error: {}".format(e))
+
+    def login(self):
+        sesh = self.session
+        for attempt in range(5):
+            try:
+                sesh.login(self.host, self.username, self.password,
+                           auto_prompt_reset=False)
+                sesh.PROMPT = '\r\n.*# '
+
+                sesh.prompt()
+                # Make sure switch doesn't send any /b literals due to term width
+                sesh.sendline(' terminal width 511')
+                self.logged_in = True
+                return True
+
+            # If the login fails, catch the exception and retry again
+            except (pxssh.ExceptionPxssh, pexpect.exceptions.TIMEOUT) as e:
+                break
+
+            # If all retries fail, error out
+            else:
+                sesh.close()
+                self.module.fail_json(msg="Login Error: {}".format(e))
+
+    def check_if_file_exists(self):
+        sesh = self.session
+        for attempt in range(5):
+            try:
+                sesh.sendline('dir')
+                i = sesh.expect([filename, "controller.*logflash"], timeout=5)
+                if i == 0:
+                    self.module.exit_json(changed=False, host=self.host)
+                if i == 1:
+                    self.module.fail_json(msg="switch not running NXOS")
+
+            except (pxssh.ExceptionPxssh, pexpect.exceptions) as e:
+                break
+
+            else:
+                sesh.close()
+                self.module.fail_json(msg="Error Checking for existing file: {}".format(e))
+
+    def copy_file(self):
+        '''
+        Method to actually copy the file.
+        '''
+
+        # Ignore ftp_timeout when using scp.
+        if self.transport is 'scp':
+            self.ftp_timeout = 30
+
+        # Remove '/' from beginning of path if it exists
+        self.remote_path = self.remote_path.lstrip('/')
+        self.full_path = os.path.join(self.remote_path, self.filename)
+
+        sesh = self.session
+        module = self.module
+
+        for attempt in range(5):
+            try:
+                sesh.prompt()
+                sesh.sendline('copy {}://{}@{}/{} {} vrf {}'.format(
+                              self.transport, self.remote_user, self.remote_server,
+                              self.full_path, self.destination, self.vrf))
+
+                # Handle any prompts that happen when initiating copy
+                for attempt in range(5):
+                    sleep(1)
+                    i = sesh.expect(["(?i)cannot stat", "(?i)Cannot overwrite" +
+                                     " existing file", "(?i)do you want to overwrite",
+                                     "(?i)continue connecting",
+                                     "(?i)Connection timed out",
+                                     "(?i)password", "(?i)switch is booted with",
+                                     pexpect.TIMEOUT], timeout=35)
+                    if i == 0:
+                        module.fail_json(msg="switch not running NXOS: {}".format(sesh.before))
+                    if i == 1:
+                        if self.force:
+                            sesh.sendline('delete {} no-prompt'.format(self.filename))
+                            continue
+                        else:
+                            module.exit_json(changed=False, host=self.host)
+                    if i == 2:
+                        if self.force:
+                            sesh.sendline('y')
+                            continue
+                        else:
+                            module.exit_json(changed=False, host=self.host)
+                    if i == 3:
+                        sesh.sendline('yes')
+                        continue
+                    if i == 4:
+                        module.fail_json(msg="Connection to file server timed out.")
+                    if i == 5:
+                        sesh.sendline(self.remote_password)
+                        break
+                    if i == 6:
+                        if self.force:
+                            module.fail_json(msg="Cannot force overwrite of running NXOS.")
+                        else:
+                            module.exit_json(changed=False, host=self.host)
+                    if i == 7:
+                        module.fail_json(msg="Error during file copy: {}".format(sesh.before))
+                while True:
+                    sleep(3)
+                    i = sesh.expect(['(?i)Copy complete|(?i)saving to disk', '(?i)login failed',
+                                    '(?i)Error during copy', "(?i)No such file", '%',
+                                     pexpect.TIMEOUT], timeout=self.ftp_timeout)
+                    if i == 0:
+                        sesh.logout()
+                        module.exit_json(changed=True, host=self.host)
+                    if i == 1:
+                        sesh.logout()
+                        module.fail_json(msg="Remote server user/password incorrect")
+                    if i == 2:
+                        sesh.logout()
+                        module.fail_json(msg="File Copy Error: {}".format(str(sesh)))
+                    if i == 3:
+                        module.fail_json(msg="File not found on remote server.")
+                    if i == 4:
+                        continue
+                    if i == 5:
+                        module.fail_json(msg="File Copy Error: transfer timed out." +
+                                         "If using FTP, try increasing ftp_timeout: {}"
+                                         .format(sesh.before))
+            except (pxssh.ExceptionPxssh, pexpect.exceptions) as e:
+                break
+
+            else:
+                sesh.close()
+                self.module.fail_json(msg="File Copy Error: {}".format(e))
+
+
+def main():
+    module = AnsibleModule(
+        argument_spec=dict(
+            host=dict(required=True, type='str'),
+            username=dict(required=True, type='str'),
+            password=dict(required=True, type='str', no_log=True),
+            remote_server=dict(required=True, type='str'),
+            remote_user=dict(required=True, type='str'),
+            remote_password=dict(required=True, type='str', no_log=True),
+            transport=dict(required=True, type='str', choices=['scp', 'ftp']),
+            ftp_timeout=dict(required=False, type='int', default=600),
+            filename=dict(required=True, type='str'),
+            remote_path=dict(required=True, type='str'),
+            destination=dict(required=False, default='bootflash:', type='str'),
+            vrf=dict(required=False, default='management', type='str'),
+            force=dict(required=False, default=False, type='bool'),
+            log=dict(required=False, default=False, type='bool'),
+            log_file=dict(required=False, type='str')
+        ),
+        supports_check_mode=True,
+    )
+
+    session = file_copy(module)
+    session.login()
+    if module.check_mode:
+        session.check_if_file_exists()
+    session.copy_file()
+
+from ansible.module_utils.basic import *
+if __name__ == '__main__':
+    main()
