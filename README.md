@@ -67,8 +67,3 @@ License
 -------
 
 BSD
-
-Author Information
-------------------
-
-Bobby Watson (bwatsoni@cisco.com, robertwatson3@gmail.com)
